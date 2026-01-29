@@ -1,0 +1,26 @@
+/* Custom styles to supplement Tailwind */
+
+/* Hide selection highlight but allow interaction */
+.transparent-selection::selection {
+    background: transparent;
+}
+
+.transparent-selection::-moz-selection {
+    background: transparent;
+}
+
+/* Mobile: Prevent zoom/delay on taps to allow fast clicking */
+#practice-text-container {
+    touch-action: manipulation;
+}
+
+/* Spinner Animation */
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.animate-spin {
+    animation: spin 1s linear infinite;
+}
