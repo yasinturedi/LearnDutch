@@ -3,6 +3,200 @@
 
     var defaultText = "Na mijn ontdekking van de kist in de gracht, besloot ik de kaart verder te volgen.";
 
+    class SnowOverlay {
+        constructor(canvasId) {
+            this.canvas = document.getElementById(canvasId);
+            if (!this.canvas) return;
+            this.ctx = this.canvas.getContext('2d', {
+                alpha: true,
+                desynchronized: true,
+                willReadFrequently: false
+            });
+
+            this.isActive = false;
+            this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+            this.sprites = [];
+            this.animationFrame = null;
+
+            // Particle data buffers
+            this.count = 0;
+            this.x = null;
+            this.y = null;
+            this.speedY = null;
+            this.baseSize = null;
+            this.time = null;
+            this.wobbleSpeed = null;
+            this.wobbleAmount = null;
+            this.wobbleSpeed2 = null;
+            this.wobbleAmount2 = null;
+            this.wobbleOffset = null;
+            this.wobbleOffset2 = null;
+            this.layerIdx = null;
+
+            this.init();
+        }
+
+        init() {
+            this.resizeCanvas();
+            this.createSprites();
+            this.initSnowflakes();
+
+            let resizeTimeout;
+            window.addEventListener('resize', () => {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(() => {
+                    this.resizeCanvas();
+                    this.initSnowflakes();
+                }, 150);
+            });
+        }
+
+        createSprites() {
+            const opacityLayers = [0.15, 0.25, 0.35, 0.45, 0.55, 0.7, 0.85];
+            this.sprites = opacityLayers.map(opacity => {
+                const size = 10;
+                const offCanvas = document.createElement('canvas');
+                offCanvas.width = size * 2;
+                offCanvas.height = size * 2;
+                const offCtx = offCanvas.getContext('2d', { alpha: true });
+
+                const grad = offCtx.createRadialGradient(size, size, 0, size, size, size);
+                grad.addColorStop(0, `rgba(255, 255, 255, ${opacity})`);
+                grad.addColorStop(0.5, `rgba(255, 255, 255, ${opacity * 0.5})`);
+                grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+                offCtx.fillStyle = grad;
+                offCtx.beginPath();
+                offCtx.arc(size, size, size, 0, Math.PI * 2);
+                offCtx.fill();
+
+                return offCanvas;
+            });
+        }
+
+        resizeCanvas() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            this.canvas.style.width = width + 'px';
+            this.canvas.style.height = height + 'px';
+            this.canvas.width = width * this.dpr;
+            this.canvas.height = height * this.dpr;
+            this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+            this.ctx.scale(this.dpr, this.dpr);
+        }
+
+        initSnowflakes() {
+            const baseCount = 5000;
+            const screenArea = window.innerWidth * window.innerHeight;
+            const referenceArea = 1920 * 1080;
+            const scaleFactor = Math.min(screenArea / referenceArea, 1.5);
+            this.count = Math.floor(baseCount * scaleFactor);
+
+            this.x = new Float32Array(this.count);
+            this.y = new Float32Array(this.count);
+            this.speedY = new Float32Array(this.count);
+            this.baseSize = new Float32Array(this.count);
+            this.time = new Float32Array(this.count);
+            this.wobbleSpeed = new Float32Array(this.count);
+            this.wobbleAmount = new Float32Array(this.count);
+            this.wobbleSpeed2 = new Float32Array(this.count);
+            this.wobbleAmount2 = new Float32Array(this.count);
+            this.wobbleOffset = new Float32Array(this.count);
+            this.wobbleOffset2 = new Float32Array(this.count);
+            this.layerIdx = new Int8Array(this.count);
+
+            const sizeLayers = [[0.2, 0.1], [0.3, 0.15], [0.4, 0.2], [0.6, 0.25], [0.85, 0.35], [1.2, 0.45], [1.5, 0.6]];
+            const speedLayers = [[0.5, 4.0], [0.4, 3.5], [0.4, 3.0], [0.6, 2.5], [0.8, 2.0], [0.7, 1.5], [0.5, 1.2]];
+            const layerDistribution = [0.35, 0.25, 0.15, 0.1, 0.08, 0.04, 0.03];
+
+            let currentIdx = 0;
+            for (let layer = 0; layer < 7; layer++) {
+                const layerCount = Math.floor(this.count * layerDistribution[layer]);
+                const endIdx = (layer === 6) ? this.count : currentIdx + layerCount;
+
+                for (let i = currentIdx; i < endIdx; i++) {
+                    this.x[i] = Math.random() * (this.canvas.width / this.dpr);
+                    this.y[i] = Math.random() * (this.canvas.height / this.dpr);
+                    this.layerIdx[i] = layer;
+                    this.baseSize[i] = sizeLayers[layer][0] + Math.random() * sizeLayers[layer][1];
+                    this.speedY[i] = speedLayers[layer][0] + Math.random() * speedLayers[layer][1];
+                    this.wobbleOffset[i] = Math.random() * Math.PI * 2;
+                    this.wobbleOffset2[i] = Math.random() * Math.PI * 2;
+                    this.time[i] = Math.random() * 1000;
+
+                    if (layer <= 2) {
+                        this.wobbleSpeed[i] = 0.02 + Math.random() * 0.05;
+                        this.wobbleAmount[i] = 20 + Math.random() * 40;
+                        this.wobbleSpeed2[i] = 0.01 + Math.random() * 0.03;
+                        this.wobbleAmount2[i] = 10 + Math.random() * 25;
+                    } else if (layer <= 4) {
+                        this.wobbleSpeed[i] = 0.015 + Math.random() * 0.025;
+                        this.wobbleAmount[i] = 10 + Math.random() * 20;
+                        this.wobbleSpeed2[i] = 0.008 + Math.random() * 0.015;
+                        this.wobbleAmount2[i] = 5 + Math.random() * 12;
+                    } else {
+                        this.wobbleSpeed[i] = 0.005 + Math.random() * 0.01;
+                        this.wobbleAmount[i] = 1 + Math.random() * 5;
+                        this.wobbleSpeed2[i] = 0.002 + Math.random() * 0.005;
+                        this.wobbleAmount2[i] = 0.5 + Math.random() * 3;
+                    }
+                }
+                currentIdx = endIdx;
+            }
+        }
+
+        animate() {
+            if (!this.isActive) return;
+
+            const ctx = this.ctx;
+            const width = this.canvas.width / this.dpr;
+            const height = this.canvas.height / this.dpr;
+            ctx.clearRect(0, 0, width, height);
+
+            for (let i = 0; i < this.count; i++) {
+                this.y[i] += this.speedY[i];
+                this.time[i] += this.wobbleSpeed[i];
+
+                if (this.y[i] > height) {
+                    this.y[i] = -10;
+                    this.x[i] = Math.random() * width;
+                }
+
+                const wobbleX1 = Math.sin(this.time[i] + this.wobbleOffset[i]) * this.wobbleAmount[i];
+                const wobbleX2 = Math.cos(this.time[i] * 0.8 + this.wobbleOffset2[i]) * this.wobbleAmount2[i];
+                const currentX = this.x[i] + wobbleX1 + wobbleX2;
+                const size = this.baseSize[i];
+
+                ctx.drawImage(this.sprites[this.layerIdx[i]], currentX - size, this.y[i] - size, size * 2, size * 2);
+            }
+
+            this.animationFrame = requestAnimationFrame(() => this.animate());
+        }
+
+        start() {
+            if (!this.isActive) {
+                this.isActive = true;
+                this.canvas.classList.add('active');
+                this.animate();
+            }
+        }
+
+        stop() {
+            if (this.isActive) {
+                this.isActive = false;
+                this.canvas.classList.remove('active');
+                if (this.animationFrame) {
+                    cancelAnimationFrame(this.animationFrame);
+                    this.animationFrame = null;
+                }
+                // Clear the canvas when stopping
+                const width = this.canvas.width / this.dpr;
+                const height = this.canvas.height / this.dpr;
+                this.ctx.clearRect(0, 0, width, height);
+            }
+        }
+    }
+
     function init() {
         var el_display = document.getElementById('dutch-text');
         var el_container = document.getElementById('practice-text-container');
@@ -16,12 +210,14 @@
         var el_model = document.getElementById('model-select');
         var el_customText = document.getElementById('custom-text-input');
         var el_save = document.getElementById('settings-save');
+        var el_snowToggle = document.getElementById('snow-toggle');
 
         if (!el_display || !el_container) return;
 
         var tapCount = 0;
         var tapTimer = null;
         var activeSpan = null;
+        var snowOverlay = new SnowOverlay('snowCanvas');
 
         function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
         function set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } }
@@ -186,6 +382,11 @@
         if (m) el_model.value = m;
         el_customText.value = get('custom_dutch_text') || el_display.innerText || defaultText;
 
+        // Snow effect initialization
+        var isSnowOn = get('let_it_snow') === 'true';
+        el_snowToggle.checked = isSnowOn;
+        if (isSnowOn) snowOverlay.start();
+
         // Universal event handler - works for both mobile and desktop
         el_display.addEventListener('touchend', handleInteraction, { passive: false });
         el_display.addEventListener('click', handleInteraction);
@@ -214,6 +415,12 @@
             set('groq_api_key', el_apiKey.value.trim());
             set('groq_model', el_model.value);
             set('custom_dutch_text', el_customText.value.trim());
+
+            var snowValue = el_snowToggle.checked;
+            set('let_it_snow', snowValue);
+            if (snowValue) snowOverlay.start();
+            else snowOverlay.stop();
+
             render(el_customText.value.trim());
             el_modal.classList.add('opacity-0');
             setTimeout(function () { el_modal.classList.add('hidden'); }, 300);
