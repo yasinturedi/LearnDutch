@@ -91,10 +91,73 @@
         #settings-trigger:hover {
             opacity: 1;
         }
+
+        #snowCanvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 9999;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+        }
+
+        #snowCanvas.active {
+            opacity: 1;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 40px;
+            height: 20px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #27272a;
+            transition: .4s;
+            border-radius: 20px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: #71717a;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked+.slider {
+            background-color: #ffffff;
+        }
+
+        input:checked+.slider:before {
+            transform: translateX(20px);
+            background-color: #000000;
+        }
     </style>
 </head>
 
 <body class="bg-black flex flex-col items-center">
+    <canvas id="snowCanvas"></canvas>
 
     <main class="main-container">
         <div id="practice-text-container" class="relative w-full">
@@ -167,6 +230,13 @@
                     <textarea id="custom-text-input"
                         class="w-full bg-neutral-800 border-none rounded-2xl px-4 py-3 text-sm text-zinc-300 focus:bg-neutral-700 outline-none h-40 resize-none"
                         placeholder="Paste dutch text..."></textarea>
+                </div>
+                <div class="flex items-center justify-between py-2">
+                    <label class="text-[10px] text-zinc-600 uppercase tracking-widest">Let it snow</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="snow-toggle">
+                        <span class="slider"></span>
+                    </label>
                 </div>
                 <button id="settings-save"
                     class="w-full py-4 bg-white text-black text-[10px] font-bold uppercase tracking-[0.2em] rounded-2xl hover:bg-zinc-200">Save
