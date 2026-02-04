@@ -75,13 +75,10 @@
         }
 
         resizeCanvas() {
-            // Force full window dimensions to ignore any container constraints
-            const width = window.innerWidth;
-            const height = window.innerHeight;
-            this.canvas.style.width = width + 'px';
-            this.canvas.style.height = height + 'px';
-            this.canvas.width = width * this.dpr;
-            this.canvas.height = height * this.dpr;
+            // Use getBoundingClientRect to match the CSS 100dvh dimension exactly
+            const rect = this.canvas.getBoundingClientRect();
+            this.canvas.width = rect.width * this.dpr;
+            this.canvas.height = rect.height * this.dpr;
             this.ctx.setTransform(1, 0, 0, 1, 0, 0);
             this.ctx.scale(this.dpr, this.dpr);
         }
@@ -117,8 +114,7 @@
 
                 for (let i = currentIdx; i < endIdx; i++) {
                     this.x[i] = Math.random() * (this.canvas.width / this.dpr);
-                    // Initial distribution: Anywhere on screen or slightly above
-                    this.y[i] = Math.random() * (this.canvas.height / this.dpr) - 50;
+                    this.y[i] = Math.random() * (this.canvas.height / this.dpr);
                     this.layerIdx[i] = layer;
                     this.baseSize[i] = sizeLayers[layer][0] + Math.random() * sizeLayers[layer][1];
                     this.speedY[i] = speedLayers[layer][0] + Math.random() * speedLayers[layer][1];
@@ -160,8 +156,7 @@
                 this.time[i] += this.wobbleSpeed[i];
 
                 if (this.y[i] > height) {
-                    // Respawn above the screen to create 'bleed' from behind the notch
-                    this.y[i] = -50 - Math.random() * 50;
+                    this.y[i] = -10;
                     this.x[i] = Math.random() * width;
                 }
 
