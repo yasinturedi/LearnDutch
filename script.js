@@ -75,13 +75,15 @@
         }
 
         resizeCanvas() {
-            // Force full window dimensions to ignore any container constraints
-            const width = window.innerWidth;
-            const height = window.innerHeight;
-            this.canvas.style.width = width + 'px';
-            this.canvas.style.height = height + 'px';
-            this.canvas.width = width * this.dpr;
-            this.canvas.height = height * this.dpr;
+            // Clear inline limits so CSS (100dvh) can control dimensions
+            this.canvas.style.width = '';
+            this.canvas.style.height = '';
+
+            // Use getBoundingClientRect to get the actual visual size including safe areas
+            const rect = this.canvas.getBoundingClientRect();
+            this.canvas.width = rect.width * this.dpr;
+            this.canvas.height = rect.height * this.dpr;
+
             this.ctx.setTransform(1, 0, 0, 1, 0, 0);
             this.ctx.scale(this.dpr, this.dpr);
         }
