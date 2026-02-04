@@ -75,11 +75,14 @@
         }
 
         resizeCanvas() {
-            // Clear inline limits so CSS (100dvh) can control dimensions
-            this.canvas.style.width = '';
-            this.canvas.style.height = '';
+            // Force canvas to extend beyond the viewport top to cover the notch/status bar area
+            // We use a negative top and add that height to the total to maintain full coverage
+            const overscan = 100;
+            this.canvas.style.top = `-${overscan}px`;
+            this.canvas.style.height = `calc(100dvh + ${overscan}px)`;
+            this.canvas.style.width = '100vw'; // Ensure full width
 
-            // Use getBoundingClientRect to get the actual visual size including safe areas
+            // Get the new extended size
             const rect = this.canvas.getBoundingClientRect();
             this.canvas.width = rect.width * this.dpr;
             this.canvas.height = rect.height * this.dpr;
