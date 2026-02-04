@@ -75,12 +75,10 @@
         }
 
         resizeCanvas() {
-            const width = window.innerWidth;
-            const height = window.innerHeight;
-            this.canvas.style.width = width + 'px';
-            this.canvas.style.height = height + 'px';
-            this.canvas.width = width * this.dpr;
-            this.canvas.height = height * this.dpr;
+            // Use getBoundingClientRect to match the CSS 100dvh dimension exactly
+            const rect = this.canvas.getBoundingClientRect();
+            this.canvas.width = rect.width * this.dpr;
+            this.canvas.height = rect.height * this.dpr;
             this.ctx.setTransform(1, 0, 0, 1, 0, 0);
             this.ctx.scale(this.dpr, this.dpr);
         }
@@ -272,9 +270,9 @@
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
                     body: JSON.stringify({
                         model: model,
-                        messages: [{ role: 'system', content: "You are a professional Dutch-Turkish translator. Follow instructions exactly. Output ONLY what is requested, nothing else." }, { role: 'user', content: promptText }],
+                        messages: [{ role: 'system', content: "You are an expert Dutch-Turkish translator with a professional, academic focus. Your goal is to provide highly natural, idiomatic Turkish translations that capture the nuance of the Dutch source. CRITICAL: Never output the Dutch source text. Output ONLY the Turkish translation." }, { role: 'user', content: promptText }],
                         temperature: 0.1,
-                        max_tokens: 60
+                        max_tokens: 100
                     })
                 });
                 var d = await r.json();
@@ -360,14 +358,14 @@
                     // Single tap: contextual word meaning
                     fetchTranslation(
                         word,
-                        "In this Dutch text: \"" + paragraph + "\"\n\nWhat does the word \"" + word + "\" mean in Turkish? Give ONLY 1-2 Turkish words as the answer.",
+                        "Context: \"" + paragraph + "\"\n\nTask: Translate the word \"" + word + "\" into Turkish, considering its context in the sentence. Provide ONLY the 1-2 most accurate Turkish words.",
                         target
                     );
                 } else {
                     // Double tap: Let AI find and translate the specific sentence
                     fetchTranslation(
                         "Sentence",
-                        "Text: \"" + paragraph + "\"\n\nFind the ONE sentence that contains the word \"" + word + "\" and translate ONLY that sentence to Turkish. Output only the Turkish translation, nothing else.",
+                        "Context: \"" + paragraph + "\"\n\nTask: Identify the sentence containing \"" + word + "\". Translate it into professional, academic Turkish. Use natural, idiomatic phrasing.\n\nStrict Output Rules:\n1. Output ONLY the Turkish translation.\n2. Do NOT repeat the Dutch sentence.",
                         target
                     );
                 }
