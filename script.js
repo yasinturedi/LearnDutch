@@ -217,14 +217,20 @@
         var el_apiKey = document.getElementById('api-key-input');
         var el_model = document.getElementById('model-select');
         var el_customText = document.getElementById('custom-text-input');
+        var el_formatText = document.getElementById('format-text-button');
+        var el_formatStatus = document.getElementById('format-text-status');
         var el_save = document.getElementById('settings-save');
         var el_snowToggle = document.getElementById('snow-toggle');
+        var el_languageOptions = document.querySelectorAll('input[name="translation-language"]');
 
         if (!el_display || !el_container) return;
 
         var tapCount = 0;
         var tapTimer = null;
+        var lastTapTarget = null;
         var activeSpan = null;
+        var translationRequestId = 0;
+        var translationController = null;
         var snowOverlay = new SnowOverlay('snowCanvas');
 
         function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -234,14 +240,13 @@
             var raw = text || get('custom_dutch_text') || el_display.innerText || defaultText;
             el_display.innerHTML = '';
 
-            var paragraphs = raw.split('\n');
+            // A blank line means a new paragraph. Single line breaks from copied
+            // PDFs/websites are treated as wrapping inside the same paragraph.
+            var paragraphs = raw.split(/\n\s*\n/);
 
             for (var p = 0; p < paragraphs.length; p++) {
-                var para = paragraphs[p].trim();
-                if (!para) {
-                    el_display.appendChild(document.createElement('br'));
-                    continue;
-                }
+                var para = paragraphs[p].replace(/\s+/g, ' ').trim();
+                if (!para) continue;
 
                 var paraDiv = document.createElement('div');
                 paraDiv.className = "mb-8 leading-relaxed";
@@ -254,8 +259,8 @@
                     var span = document.createElement('span');
                     span.className = "word-span";
                     span.textContent = word;
-                    // Store the full paragraph context
                     span.setAttribute('data-paragraph', para);
+                    span.setAttribute('data-word-index', String(w));
                     paraDiv.appendChild(span);
                     paraDiv.appendChild(document.createTextNode(' '));
                 }
@@ -264,7 +269,166 @@
             }
         }
 
-        async function fetchTranslation(titleText, promptText, anchor) {
+        function getTargetLanguage() {
+            return get('translation_language') === 'en'
+                ? { code: 'en', name: 'English', shortName: 'EN' }
+                : { code: 'tr', name: 'Turkish', shortName: 'TR' };
+        }
+
+        function buildMarkedContext(paragraph, wordIndex) {
+            return paragraph.split(/\s+/).map(function (token, index) {
+                return index === wordIndex ? '<<<' + token + '>>>' : token;
+            }).join(' ');
+        }
+
+        function buildPrompt(mode, paragraph, word, wordIndex, languageName) {
+            var markedContext = buildMarkedContext(paragraph, wordIndex);
+            var shared = [
+                'The source is Dutch. Translate into ' + languageName + '.',
+                'The clicked token is marked with <<< >>>. These markers are not part of the source.',
+                '',
+                'SOURCE:',
+                markedContext,
+                '',
+                'CLICKED WORD:',
+                word
+            ];
+
+            if (mode === 'word') {
+                return shared.concat([
+                    '',
+                    'TASK:',
+                    'Give the primary meaning of the clicked word as it is used in this specific context.',
+                    '',
+                    'OUTPUT RULES:',
+                    '- Return only the best contextual translation: one word or one short expression.',
+                    '- Do not list alternatives, explain, define, quote the Dutch, or add a label.',
+                    '- Translate the meaning in this context, not the word\'s most common dictionary meaning.'
+                ]).join('\n');
+            }
+
+            return shared.concat([
+                '',
+                'TASK:',
+                'Find the one semantic sentence that contains the marked word and translate that sentence.',
+                'Infer the intended sentence boundaries from grammar and meaning even if punctuation is missing or incorrect.',
+                '',
+                'OUTPUT RULES:',
+                '- Return only the translation of that one sentence.',
+                '- Never translate the complete paragraph, a neighboring sentence, or unrelated context.',
+                '- Do not quote the Dutch, explain your choice, or add a label.',
+                '- Preserve the sentence\'s meaning and tone in natural ' + languageName + '.'
+            ]).join('\n');
+        }
+
+        function getApiErrorMessage(status) {
+            if (status === 401 || status === 403) return 'API key rejected';
+            if (status === 404) return 'Selected model unavailable';
+            if (status === 429) return 'API limit reached. Try again shortly.';
+            if (status >= 500) return 'Groq is temporarily unavailable';
+            return 'Request failed (' + status + ')';
+        }
+
+        function setFormatStatus(message, isError) {
+            el_formatStatus.textContent = message || '';
+            el_formatStatus.classList.toggle('hidden', !message);
+            el_formatStatus.classList.toggle('text-red-400', Boolean(isError));
+            el_formatStatus.classList.toggle('text-emerald-400', Boolean(message) && !isError);
+        }
+
+        function sameWordsAndPunctuation(first, second) {
+            return first.replace(/\s+/g, ' ').trim() === second.replace(/\s+/g, ' ').trim();
+        }
+
+        async function organizeParagraphs() {
+            var key = get('groq_api_key') || el_apiKey.value.trim();
+            var sourceText = el_customText.value.trim();
+
+            if (!key) {
+                setFormatStatus('Add your Groq API key first.', true);
+                return;
+            }
+            if (!sourceText) {
+                setFormatStatus('Paste a Dutch text first.', true);
+                return;
+            }
+
+            el_formatText.disabled = true;
+            el_formatText.textContent = 'Organizing…';
+            setFormatStatus('', false);
+
+            try {
+                var model = el_model.value || get('groq_model') || 'openai/gpt-oss-20b';
+                var response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: [
+                            {
+                                role: 'system',
+                                content: 'You organize Dutch prose into readable paragraphs. You may change whitespace only. Never add, remove, reorder, correct, translate, or replace any word, letter, number, or punctuation mark.'
+                            },
+                            {
+                                role: 'user',
+                                content: [
+                                    'Organize the Dutch text below into natural, readable paragraphs based on topic, scene, and flow.',
+                                    'Aim for roughly 2–4 sentences per paragraph, but use shorter paragraphs for dialogue or a clear scene change.',
+                                    'If punctuation is missing, infer paragraph boundaries from grammar and meaning without repairing the punctuation.',
+                                    'Separate paragraphs with exactly one blank line.',
+                                    'Return only the original text with improved whitespace. Every non-whitespace character must remain identical and in the same order.',
+                                    '',
+                                    'DUTCH TEXT:',
+                                    sourceText
+                                ].join('\n')
+                            }
+                        ],
+                        temperature: 0,
+                        max_completion_tokens: 4096,
+                        reasoning_effort: model.indexOf('qwen/') === 0 ? 'none' : 'low',
+                        reasoning_format: 'hidden'
+                    })
+                });
+                var data = await response.json();
+
+                if (!response.ok) {
+                    console.error('Groq formatting error:', data && data.error ? data.error.message : response.status);
+                    setFormatStatus(getApiErrorMessage(response.status), true);
+                    return;
+                }
+
+                var formattedText = data && data.choices && data.choices[0] && data.choices[0].message
+                    ? data.choices[0].message.content
+                    : '';
+                formattedText = typeof formattedText === 'string' ? formattedText.trim() : '';
+                formattedText = formattedText.replace(/^```(?:text)?\s*/i, '').replace(/```$/i, '').trim();
+
+                if (!formattedText) {
+                    setFormatStatus('The model returned no formatted text.', true);
+                    return;
+                }
+                if (!sameWordsAndPunctuation(sourceText, formattedText)) {
+                    console.error('Formatting rejected because the source wording changed.');
+                    setFormatStatus('Nothing changed: the AI result was incomplete or altered the wording. Please try again.', true);
+                    return;
+                }
+
+                el_customText.value = formattedText;
+                setFormatStatus('Paragraphs organized. Review them, then save.', false);
+            } catch (error) {
+                console.error('Paragraph formatting failed:', error);
+                setFormatStatus('Could not organize the text. Check your connection.', true);
+            } finally {
+                el_formatText.disabled = false;
+                el_formatText.textContent = 'Organize paragraphs with AI';
+            }
+        }
+
+        async function fetchTranslation(titleText, promptText, anchor, language) {
+            var requestId = ++translationRequestId;
+            if (translationController) translationController.abort();
+            translationController = null;
+
             var key = get('groq_api_key');
             if (!key) {
                 showTooltip("NO API KEY", "Set in settings", false, anchor);
@@ -272,31 +436,68 @@
             }
 
             showTooltip(titleText, "", true, anchor);
+            translationController = typeof AbortController !== 'undefined' ? new AbortController() : null;
 
             try {
-                var model = get('groq_model') || 'llama-3.3-70b-versatile';
+                var model = get('groq_model') || 'openai/gpt-oss-20b';
+                var requestBody = {
+                    model: model,
+                    messages: [
+                        {
+                            role: 'system',
+                            content: 'You are a precise Dutch-to-' + language.name + ' translator for a language learner. Follow the requested scope exactly. Return only the translation, with no analysis, notes, labels, quotation marks, or source text.'
+                        },
+                        { role: 'user', content: promptText }
+                    ],
+                    temperature: 0.1,
+                    max_completion_tokens: 400,
+                    reasoning_effort: model.indexOf('qwen/') === 0 ? 'none' : 'low',
+                    reasoning_format: 'hidden'
+                };
                 var r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
-                    body: JSON.stringify({
-                        model: model,
-                        messages: [{ role: 'system', content: "You are an expert Dutch-Turkish translator with a professional, academic focus. Your goal is to provide highly natural, idiomatic Turkish translations that capture the nuance of the Dutch source. CRITICAL: Never output the Dutch source text. Output ONLY the Turkish translation." }, { role: 'user', content: promptText }],
-                        temperature: 0.1,
-                        max_tokens: 100
-                    })
+                    body: JSON.stringify(requestBody),
+                    signal: translationController ? translationController.signal : undefined
                 });
                 var d = await r.json();
-                var result = d.choices[0].message.content.trim();
+                if (!r.ok) {
+                    console.error('Groq API error:', d && d.error ? d.error.message : r.status);
+                    if (requestId === translationRequestId) {
+                        showTooltip('API ERROR', getApiErrorMessage(r.status), false, anchor);
+                    }
+                    return;
+                }
+
+                var result = d && d.choices && d.choices[0] && d.choices[0].message
+                    ? d.choices[0].message.content
+                    : '';
+                result = typeof result === 'string' ? result.trim() : '';
+
+                if (!result) {
+                    console.error('Groq API returned no translation:', d);
+                    if (requestId === translationRequestId) {
+                        showTooltip('NO RESULT', 'The model returned no translation', false, anchor);
+                    }
+                    return;
+                }
 
                 // Clean up any extra formatting
                 result = result.replace(/^["']|["']$/g, '');
                 result = result.replace(/^\*\*|\*\*$/g, '');
                 result = result.replace(/^Translation:\s*/i, '');
                 result = result.replace(/^Turkish:\s*/i, '');
+                result = result.replace(/^English:\s*/i, '');
 
-                showTooltip(titleText, result, false, anchor);
+                if (requestId === translationRequestId) {
+                    showTooltip(titleText, result, false, anchor);
+                }
             } catch (e) {
-                showTooltip("ERROR", "Check connection", false, anchor);
+                if (e && e.name === 'AbortError') return;
+                console.error('Translation request failed:', e);
+                if (requestId === translationRequestId) {
+                    showTooltip("ERROR", "Check your connection", false, anchor);
+                }
             }
         }
 
@@ -332,6 +533,9 @@
         }
 
         function hideTooltip() {
+            translationRequestId++;
+            if (translationController) translationController.abort();
+            translationController = null;
             el_tooltip.classList.add('opacity-0');
             setTimeout(function () {
                 el_tooltip.classList.add('hidden');
@@ -354,6 +558,8 @@
             target.classList.add('active');
             activeSpan = target;
 
+            if (lastTapTarget !== target) tapCount = 0;
+            lastTapTarget = target;
             tapCount++;
             clearTimeout(tapTimer);
 
@@ -363,20 +569,22 @@
 
                 var word = target.textContent.replace(/[.,!?";:()]/g, '');
                 var paragraph = target.getAttribute('data-paragraph');
+                var wordIndex = Number(target.getAttribute('data-word-index'));
+                var language = getTargetLanguage();
 
                 if (count === 1) {
-                    // Single tap: contextual word meaning
                     fetchTranslation(
-                        word,
-                        "Context: \"" + paragraph + "\"\n\nTask: Translate the word \"" + word + "\" into Turkish, considering its context in the sentence. Provide ONLY the 1-2 most accurate Turkish words.",
-                        target
+                        word + ' · ' + language.shortName,
+                        buildPrompt('word', paragraph, word, wordIndex, language.name),
+                        target,
+                        language
                     );
                 } else {
-                    // Double tap: Let AI find and translate the specific sentence
                     fetchTranslation(
-                        "Sentence",
-                        "Context: \"" + paragraph + "\"\n\nTask: Identify the sentence containing \"" + word + "\". Translate it into professional, academic Turkish. Use natural, idiomatic phrasing.\n\nStrict Output Rules:\n1. Output ONLY the Turkish translation.\n2. Do NOT repeat the Dutch sentence.",
-                        target
+                        'Sentence · ' + language.shortName,
+                        buildPrompt('sentence', paragraph, word, wordIndex, language.name),
+                        target,
+                        language
                     );
                 }
             }, 300);
@@ -389,14 +597,18 @@
         var m = get('groq_model');
         if (m) el_model.value = m;
         el_customText.value = get('custom_dutch_text') || el_display.innerText || defaultText;
+        var savedLanguage = getTargetLanguage().code;
+        for (var languageIndex = 0; languageIndex < el_languageOptions.length; languageIndex++) {
+            el_languageOptions[languageIndex].checked = el_languageOptions[languageIndex].value === savedLanguage;
+        }
 
         // Snow effect initialization
         var isSnowOn = get('let_it_snow') === 'true';
         el_snowToggle.checked = isSnowOn;
         if (isSnowOn) snowOverlay.start();
 
-        // Universal event handler - works for both mobile and desktop
-        el_display.addEventListener('touchend', handleInteraction, { passive: false });
+        // Browsers emit one click for one mouse click or touch tap. Listening only
+        // here prevents the same phone tap being counted again as a synthetic click.
         el_display.addEventListener('click', handleInteraction);
 
         // Dismiss tooltip
@@ -419,10 +631,14 @@
             setTimeout(function () { el_modal.classList.remove('opacity-0'); }, 10);
         });
 
+        el_formatText.addEventListener('click', organizeParagraphs);
+
         el_save.addEventListener('click', function () {
             set('groq_api_key', el_apiKey.value.trim());
             set('groq_model', el_model.value);
             set('custom_dutch_text', el_customText.value.trim());
+            var selectedLanguage = document.querySelector('input[name="translation-language"]:checked');
+            set('translation_language', selectedLanguage ? selectedLanguage.value : 'tr');
 
             var snowValue = el_snowToggle.checked;
             set('let_it_snow', snowValue);
